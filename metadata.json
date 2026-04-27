@@ -1,0 +1,8 @@
+{
+  "name": "Eye Disease Detector",
+  "description": "A production-ready, modular, and medically explainable system for early eye disease detection using the Gemini 2.0 Flash multimodal pipeline.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": []
+}

@@ -1,0 +1,76 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: /users/{userId}
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required, email format)
+    //   - displayName: string (optional)
+    //   - photoURL: string (optional)
+    //   - role: string (required, enum: ['patient', 'admin'])
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: /users/{userId}/scans/{scanId}
+    // Fields:
+    //   - userId: string (required)
+    //   - imageUrl: string (required)
+    //   - segmentedImageUrl: string (optional)
+    //   - heatmapUrl: string (optional)
+    //   - prediction: string (required)
+    //   - confidence: number (required)
+    //   - allScores: map (optional)
+    //   - explanation: string (optional)
+    //   - patientInfo: map (required, contains patient intake data)
+    //   - timestamp: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "thrishulks20@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && request.resource.data.uid == request.auth.uid &&
+                    request.resource.data.role == 'patient' &&
+                    isValidEmail(request.resource.data.email);
+      allow update: if isOwner(userId) && request.resource.data.role == resource.data.role;
+      
+      match /scans/{scanId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId) && 
+                      request.resource.data.userId == request.auth.uid &&
+                      request.resource.data.confidence >= 0 && 
+                      request.resource.data.confidence <= 1 &&
+                      request.resource.data.patientInfo.fullName is string &&
+                      request.resource.data.patientInfo.fullName.size() > 0;
+        allow update, delete: if isOwner(userId);
+      }
+    }
+  }
+}

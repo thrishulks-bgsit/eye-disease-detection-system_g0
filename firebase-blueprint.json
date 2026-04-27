@@ -1,0 +1,78 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "role": { "type": "string", "enum": ["patient", "admin"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Scan": {
+      "title": "Scan",
+      "description": "Eye disease detection scan result",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "segmentedImageUrl": { "type": "string" },
+        "heatmapUrl": { "type": "string" },
+        "prediction": { "type": "string" },
+        "confidence": { "type": "number" },
+        "allScores": { "type": "object" },
+        "explanation": { "type": "string" },
+        "patientInfo": { "$ref": "PatientData" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "metadata": { "type": "object" }
+      },
+      "required": ["userId", "imageUrl", "prediction", "confidence", "timestamp", "patientInfo"]
+    },
+    "PatientData": {
+      "title": "PatientData",
+      "description": "Comprehensive patient intake information",
+      "type": "object",
+      "properties": {
+        "fullName": { "type": "string" },
+        "patientId": { "type": "string" },
+        "dob": { "type": "string" },
+        "age": { "type": "string" },
+        "gender": { "type": "string" },
+        "bloodGroup": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "address": { "type": "string" },
+        "emergencyContactName": { "type": "string" },
+        "emergencyContactRelation": { "type": "string" },
+        "emergencyContactPhone": { "type": "string" },
+        "referredBy": { "type": "string" },
+        "occupation": { "type": "string" },
+        "medicalConditions": { "type": "string" },
+        "medications": { "type": "string" },
+        "allergies": { "type": "string" },
+        "familyHistory": { "type": "string" },
+        "lifestyle": { "type": "string" },
+        "previousSurgeries": { "type": "string" },
+        "lastExamDate": { "type": "string" },
+        "correctiveLenses": { "type": "string" }
+      },
+      "required": ["fullName"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile documents"
+    },
+    "/users/{userId}/scans/{scanId}": {
+      "schema": "Scan",
+      "description": "History of scans for a user"
+    }
+  }
+}
