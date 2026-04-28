@@ -41,20 +41,6 @@ export interface PipelineResult {
 }
 
 export const runEyePipeline = async (imageBase64: string): Promise<PipelineResult> => {
-  // Use proxy in the browser
-  if (typeof window !== 'undefined') {
-    const response = await fetch('/api/inference', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: imageBase64 })
-    });
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Failed to process image');
-    }
-    return response.json();
-  }
-
   const maxRetries = 2;
   let lastError: any = null;
 
@@ -253,27 +239,12 @@ export const runEyePipeline = async (imageBase64: string): Promise<PipelineResul
     }
   }
 
-  throw new Error(`The AI returned an invalid response after ${maxRetries + 1} attempts. Please try again with a clearer image. Details: ${lastError?.message}`);
+  throw new Error(`The AI returned an invalid response after ${maxRetries + 1} attempts. Please try again with a clearer image. Details: ${lastError instanceof Error ? lastError.message : JSON.stringify(lastError)}`);
 };
 
 export const getHealthAssistantResponse = async (query: string, history: any[]): Promise<string> => {
-  // Use proxy in the browser
-  if (typeof window !== 'undefined') {
-    const response = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, history })
-    });
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Failed to get chat response');
-    }
-    const data = await response.json();
-    return data.text;
-  }
-
   const response = await ai.models.generateContent({
-    model: "gemini-1.5-flash",
+    model: "gemini-2.0-flash",
     contents: [
       { text: `You are an Eye Health Assistant. Provide helpful, non-diagnostic advice about eye health. 
                Always include a disclaimer that you are an AI and not a doctor.
