@@ -41,7 +41,7 @@ export interface PipelineResult {
 }
 
 export const runEyePipeline = async (imageBase64: string): Promise<PipelineResult> => {
-  const maxRetries = 2;
+  const maxRetries = 3;
   let lastError: any = null;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -84,7 +84,7 @@ export const runEyePipeline = async (imageBase64: string): Promise<PipelineResul
       const base64Data = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
 
       const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-3-flash-preview",
         contents: [
           { text: prompt },
           { inlineData: { data: base64Data, mimeType: "image/jpeg" } }
@@ -230,12 +230,19 @@ export const runEyePipeline = async (imageBase64: string): Promise<PipelineResul
       };
 
       return finalResult;
-    } catch (error) {
+    } catch (error: any) {
       console.error(`Pipeline attempt ${attempt + 1} failed:`, error);
       lastError = error;
       if (attempt === maxRetries) break;
-      // Wait a bit before retrying
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Exponential backoff: base * 2^attempt + jitter
+      const isRateLimit = error.message?.includes('429') || error.status === 429;
+      const waitTime = isRateLimit 
+        ? Math.pow(2, attempt) * 2000 + Math.random() * 1000 
+        : 1000;
+        
+      console.log(`Waiting ${Math.round(waitTime)}ms before retry...`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
     }
   }
 
@@ -244,14 +251,14 @@ export const runEyePipeline = async (imageBase64: string): Promise<PipelineResul
 
 export const getHealthAssistantResponse = async (query: string, history: any[]): Promise<string> => {
   const response = await ai.models.generateContent({
-    model: "gemini-2.0-flash",
+    model: "gemini-3-flash-preview",
     contents: [
       { text: `You are an Eye Health Assistant. Provide helpful, non-diagnostic advice about eye health. 
                Always include a disclaimer that you are an AI and not a doctor.
                User query: ${query}` }
     ],
     config: {
-      thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL }
+      thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
     }
   });
   return response.text || "I'm sorry, I couldn't process that request.";
