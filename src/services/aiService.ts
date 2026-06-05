@@ -2,6 +2,23 @@ import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
+const SYSTEM_INSTRUCTION = `
+You are the core intelligence of the Eye Disease Detector system. 
+Analyze eye images through a multi-stage pipeline:
+1. Detection: Locate the eye and crop it.
+2. Segmentation: Identify iris, pupil, sclera, and eyelids.
+3. Classification: Detect diseases (Normal, Cataract, Conjunctivitis, Glaucoma, Corneal Ulcer, Pterygium, Blindness/Severe Impairment, Myopia, Hyperopia, Astigmatism, Presbyopia).
+4. XAI: Identify affected regions with specific hotspots (x, y coordinates).
+5. Validation: Ensure consistency.
+
+OUTPUT RULES:
+- ALWAYS return valid JSON. 
+- NEVER truncate the response.
+- "hotspots" should be 1-3 visible symptoms coordinates (0.00-1.00).
+- "explanation" max 100 words.
+- Returns "original" for image strings.
+`;
+
 export interface DetectionResult {
   eyeDetected: boolean;
   croppedImage: string; // base64
@@ -41,57 +58,34 @@ export interface PipelineResult {
 }
 
 export const runEyePipeline = async (imageBase64: string): Promise<PipelineResult> => {
-  const maxRetries = 3;
+  const maxRetries = 5;
   let lastError: any = null;
+  const models = [
+    "gemini-2.0-flash", 
+    "gemini-1.5-flash", 
+    "gemini-3-flash-preview",
+    "gemini-1.5-pro",
+    "gemini-2.0-flash-lite-preview"
+  ];
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const prompt = `
-        You are the core intelligence of the Eye Disease Detector system. 
-        Analyze the provided eye image through a multi-stage pipeline:
-        1. Detection: Locate the eye and crop it.
-        2. Segmentation: Identify iris, pupil, sclera, and eyelids.
-        3. Classification: Detect diseases and refractive errors (Normal, Cataract, Conjunctivitis, Glaucoma, Corneal Ulcer, Pterygium, Blindness/Severe Impairment, Myopia, Hyperopia, Astigmatism, Presbyopia).
-        4. XAI: Explain the prediction and identify affected regions.
-        5. Validation: Cross-check for consistency.
-
-        Return a JSON object matching this structure:
-        {
-          "detection": { "eyeDetected": boolean, "croppedImage": "original" },
-          "segmentation": { "maskOverlay": "original", "regions": { "iris": float, "pupil": float, "sclera": float, "eyelids": float } },
-          "classification": { "prediction": string, "confidence": float, "allScores": { "DiseaseName": float } },
-          "xai": { 
-            "heatmap": "original", 
-            "explanation": string,
-            "hotspots": [
-              { "x": float, "y": float, "radius": float, "intensity": float }
-            ]
-          },
-          "validation": { "isConsistent": boolean, "warning": string }
-        }
-        
-        For "hotspots", provide 1-3 coordinates (0.0 to 1.0) where the disease symptoms are most visible. 
-        Intensity should be between 0.5 and 1.0.
-        Note: For "croppedImage", "maskOverlay", and "heatmap", ALWAYS return the literal string "original". Do NOT attempt to return base64 data.
-        Keep the "explanation" concise but medically accurate (max 150 words).
-        Special Note for Blindness/Severe Impairment: Look for:
-        - Total corneal or lenticular opacification (leukocoria).
-        - Severe structural atrophy (phthisis bulbi).
-        - Advanced degenerative markers (macular scarring, extensive retinal detachment signs).
-        - Absence of clear anatomical structures in the anterior or posterior segment.
-      `;
-
       const base64Data = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
+      const currentModel = models[attempt % models.length];
+      
+      console.log(`Pipeline attempt ${attempt + 1} starting with model: ${currentModel}`);
 
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: currentModel,
         contents: [
-          { text: prompt },
+          { text: "Perform full ophthalmological analysis on this image." },
           { inlineData: { data: base64Data, mimeType: "image/jpeg" } }
         ],
         config: {
+          systemInstruction: SYSTEM_INSTRUCTION,
           responseMimeType: "application/json",
           maxOutputTokens: 2048,
+          temperature: 0.1, // Even lower for stability
           responseSchema: {
             type: Type.OBJECT,
             required: ["detection", "segmentation", "classification", "xai", "validation"],
@@ -180,24 +174,35 @@ export const runEyePipeline = async (imageBase64: string): Promise<PipelineResul
       });
 
       let result: any;
-      const text = response.text || "{}";
+      const text = response.text;
+      
+      if (!text) throw new Error("AI returned empty response");
+
       try {
+        // Modern GenAI SDK text can sometimes have markdown blocks even with JSON mime type
         const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
-        result = JSON.parse(cleanText);
+        
+        // Remove common JSON syntax errors like trailing commas before closing braces/brackets
+        const sanitizingRegex = /,\s*([}\]])/g;
+        const sanitizedText = cleanText.replace(sanitizingRegex, '$1');
+        
+        result = JSON.parse(sanitizedText);
       } catch (e) {
         console.error(`AI Response Parse Error (Attempt ${attempt + 1}):`, e);
-        console.error("Raw Response Text:", text);
+        console.warn("Raw Response Text (First 200 chars):", text.substring(0, 200) + "...");
         
-        // If it's an unterminated string, we might try to fix it by adding a closing brace if it looks like it's just missing that
-        if (e instanceof Error && e.message.includes('Unterminated string')) {
-           // Very basic attempt to close JSON if it's just missing the end
-           try {
-             result = JSON.parse(text + '"} } }'); // This is risky but sometimes works for cut-off strings
-           } catch (innerE) {
-             throw e; // Rethrow original if fix fails
-           }
-        } else {
-          throw e;
+        // Final aggressive attempt: find the outer-most JSON object
+        try {
+          const firstBrace = text.indexOf('{');
+          const lastBrace = text.lastIndexOf('}');
+          if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+            const jsonPart = text.substring(firstBrace, lastBrace + 1);
+            result = JSON.parse(jsonPart.replace(/,\s*([}\]])/g, '$1'));
+          } else {
+            throw e;
+          }
+        } catch (innerE) {
+          throw e; // Rethrow original parse error if aggressive strategy fails
         }
       }
       
@@ -235,13 +240,13 @@ export const runEyePipeline = async (imageBase64: string): Promise<PipelineResul
       lastError = error;
       if (attempt === maxRetries) break;
       
-      // Exponential backoff: base * 2^attempt + jitter
-      const isRateLimit = error.message?.includes('429') || error.status === 429;
+      // Enhanced backoff for 429
+      const isRateLimit = error.message?.includes('429') || error.status === 429 || error.message?.includes('RESOURCE_EXHAUSTED');
       const waitTime = isRateLimit 
-        ? Math.pow(2, attempt) * 2000 + Math.random() * 1000 
+        ? Math.pow(2, attempt) * 3000 + Math.random() * 1000 
         : 1000;
         
-      console.log(`Waiting ${Math.round(waitTime)}ms before retry...`);
+      console.warn(`Attempt ${attempt + 1} failed (${isRateLimit ? 'Rate Limit' : 'Other'}). Waiting ${Math.round(waitTime)}ms before next attempt...`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
     }
   }
@@ -256,10 +261,7 @@ export const getHealthAssistantResponse = async (query: string, history: any[]):
       { text: `You are an Eye Health Assistant. Provide helpful, non-diagnostic advice about eye health. 
                Always include a disclaimer that you are an AI and not a doctor.
                User query: ${query}` }
-    ],
-    config: {
-      thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
-    }
+    ]
   });
   return response.text || "I'm sorry, I couldn't process that request.";
 };
